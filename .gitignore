@@ -1,0 +1,17 @@
+# Rust
+/target/
+
+# Node / Electron
+electron/node_modules/
+electron/dist/
+electron/.vite/
+*.node
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo

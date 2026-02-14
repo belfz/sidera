@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom scrollbar for the dark theme */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0a0e17;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #2a3548;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3a4a60;
+  }
+
+  /* Drag region for the title bar */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-astro-surface border border-astro-border rounded-lg;
+  }
+
+  .panel-header {
+    @apply px-3 py-2 border-b border-astro-border text-sm font-medium text-astro-text-dim uppercase tracking-wider;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-astro-accent hover:bg-astro-accent-dim text-white rounded-md
+           text-sm font-medium transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-astro-surface-light hover:bg-astro-border text-astro-text rounded-md
+           text-sm font-medium border border-astro-border transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-icon {
+    @apply p-1.5 rounded-md hover:bg-astro-surface-light text-astro-text-dim
+           hover:text-astro-text transition-colors duration-150;
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2 bg-astro-bg border border-astro-border rounded-md
+           text-astro-text text-sm placeholder-astro-text-dim
+           focus:outline-none focus:border-astro-accent focus:ring-1 focus:ring-astro-accent;
+  }
+
+  .select-field {
+    @apply w-full px-3 py-2 bg-astro-bg border border-astro-border rounded-md
+           text-astro-text text-sm appearance-none cursor-pointer
+           focus:outline-none focus:border-astro-accent;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-light {
+    @apply badge bg-astro-accent/20 text-astro-accent;
+  }
+
+  .badge-dark {
+    @apply badge bg-purple-500/20 text-purple-400;
+  }
+
+  .badge-flat {
+    @apply badge bg-astro-warning/20 text-astro-warning;
+  }
+
+  .badge-bias {
+    @apply badge bg-astro-text-dim/20 text-astro-text-dim;
+  }
+
+  .slider {
+    @apply w-full h-1.5 bg-astro-border rounded-full appearance-none cursor-pointer
+           [&::-webkit-slider-thumb]:appearance-none
+           [&::-webkit-slider-thumb]:w-3.5
+           [&::-webkit-slider-thumb]:h-3.5
+           [&::-webkit-slider-thumb]:rounded-full
+           [&::-webkit-slider-thumb]:bg-astro-accent
+           [&::-webkit-slider-thumb]:cursor-pointer
+           [&::-webkit-slider-thumb]:hover:bg-astro-accent-dim;
+  }
+}

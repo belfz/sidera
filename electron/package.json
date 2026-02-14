@@ -1,0 +1,35 @@
+{
+  "name": "astro-viber",
+  "version": "0.1.0",
+  "description": "Astrophotography image stacking tool",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "npm run build:main && concurrently -k \"vite\" \"tsc -p tsconfig.node.json --watch\" \"sleep 2 && electron .\"",
+    "dev:renderer": "vite",
+    "dev:electron": "tsc -p tsconfig.node.json && electron .",
+    "build:renderer": "tsc && vite build",
+    "build:main": "tsc -p tsconfig.node.json",
+    "build": "npm run build:renderer && npm run build:main",
+    "preview": "vite preview",
+    "build:napi": "cd ../crates/napi-bridge && npm run build"
+  },
+  "dependencies": {
+    "electron-store": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.0",
+    "concurrently": "^9.0.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "postcss": "^8.4.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "zustand": "^5.0.0"
+  }
+}
