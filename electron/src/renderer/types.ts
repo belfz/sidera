@@ -90,6 +90,12 @@ export interface AstroAPI {
     bayerPattern?: string;
     stackingConfig: StackingConfig;
   }) => Promise<string>;
+
+  /** Subscribe to log lines from the processing engine. Returns unsubscribe fn. */
+  onLog: (callback: (line: string) => void) => () => void;
+
+  /** Subscribe to pipeline progress updates. Returns unsubscribe fn. */
+  onProgress: (callback: (data: { id: string; stage: string; percent: number }) => void) => () => void;
 }
 
 declare global {

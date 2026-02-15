@@ -3,6 +3,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 /**
  * Expose a safe API to the renderer process via contextBridge.
  * The renderer can access these methods via `window.astro`.
+ *
+ * All processing is handled by a separate CLI process (astro-cli),
+ * which the main process communicates with via JSON over stdio.
+ * This architecture prevents processing crashes from taking down the UI.
  */
 contextBridge.exposeInMainWorld('astro', {
   // ─── File dialogs ───────────────────────────────────────────────────────
@@ -17,12 +21,12 @@ contextBridge.exposeInMainWorld('astro', {
     filters?: { name: string; extensions: string[] }[];
   }) => ipcRenderer.invoke('dialog:save-file', options || {}),
 
-  // ─── Native bridge ─────────────────────────────────────────────────────
+  // ─── CLI bridge ───────────────────────────────────────────────────────
   /** Load only FITS headers (no pixel data) for the file list. */
   loadFits: (filePath: string) =>
     ipcRenderer.invoke('native:load-fits', filePath),
 
-  /** Load a single file fully for preview purposes. */
+  /** Load a single file fully for preview purposes. Returns store image ID. */
   loadPreview: (filePath: string) =>
     ipcRenderer.invoke('native:load-preview', filePath),
 
@@ -64,4 +68,20 @@ contextBridge.exposeInMainWorld('astro', {
     bayerPattern?: string;
     stackingConfig: { method: string; kappa?: number; iterations?: number };
   }) => ipcRenderer.invoke('native:run-pipeline', config),
+
+  // ─── Event listeners for log/progress ──────────────────────────────────
+
+  /** Subscribe to log lines from the processing engine (stderr). */
+  onLog: (callback: (line: string) => void): (() => void) => {
+    const handler = (_event: any, line: string) => callback(line);
+    ipcRenderer.on('cli:log', handler);
+    return () => ipcRenderer.removeListener('cli:log', handler);
+  },
+
+  /** Subscribe to pipeline progress updates. */
+  onProgress: (callback: (data: { id: string; stage: string; percent: number }) => void): (() => void) => {
+    const handler = (_event: any, data: { id: string; stage: string; percent: number }) => callback(data);
+    ipcRenderer.on('cli:progress', handler);
+    return () => ipcRenderer.removeListener('cli:progress', handler);
+  },
 });

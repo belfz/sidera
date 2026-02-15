@@ -5,8 +5,8 @@ A modern astrophotography image stacking tool built with Rust and Electron.
 ## Architecture
 
 - **`crates/astro-core`** — Pure Rust image processing library: FITS I/O, calibration, star detection, alignment, stacking, and output.
-- **`crates/napi-bridge`** — napi-rs bindings exposing the Rust core to Node.js / Electron.
-- **`electron/`** — Electron + React (TypeScript) frontend with dark-themed UI.
+- **`crates/astro-cli`** — CLI server binary that runs as a child process of the Electron app, communicating via JSON over stdio. Keeps processing isolated from the UI — crashes in the engine don't take down the app.
+- **`electron/`** — Electron + React (TypeScript) frontend with dark-themed UI, including real-time log output from the processing engine.
 
 ## Features
 
@@ -14,9 +14,10 @@ A modern astrophotography image stacking tool built with Rust and Electron.
 - **Full calibration pipeline** — Master bias, dark, and flat frame creation with automatic light frame calibration
 - **Bayer demosaicing** — Support for RGGB, BGGR, GRBG, GBRG patterns with auto-detection from FITS headers
 - **Star detection** — Threshold-based detection with Gaussian centroiding and HFR measurement
-- **Alignment** — Triangle pattern matching with full homography estimation (RANSAC) and Lanczos resampling
+- **Alignment** — Triangle pattern matching + nearest-neighbor with full homography estimation (RANSAC)
 - **Stacking** — Mean, median, sigma-clipped mean, and sigma-clipped median integration
 - **Interactive preview** — Real-time histogram with adjustable midtone transfer function stretch
+- **Output log** — Live processing engine output in a scrollable panel
 - **Multiple output formats** — FITS (32-bit float), TIFF (16-bit), PNG (8-bit with stretch)
 
 ## Prerequisites
@@ -27,10 +28,10 @@ A modern astrophotography image stacking tool built with Rust and Electron.
 
 ## Development
 
-### Build the Rust core
+### Build the Rust CLI
 
 ```bash
-cargo build --release
+cargo build --release -p astro-cli
 ```
 
 ### Run tests
@@ -39,7 +40,7 @@ cargo build --release
 cargo test
 ```
 
-### Set up the Electron app
+### Set up and run the Electron app
 
 ```bash
 cd electron
@@ -47,13 +48,7 @@ npm install
 npm run dev
 ```
 
-### Build the native addon
-
-```bash
-cd crates/napi-bridge
-npm install
-npm run build
-```
+The `dev` script automatically builds the CLI binary before launching.
 
 ## Calibration Pipeline
 

@@ -5,6 +5,7 @@ import ImagePreview from './components/ImagePreview';
 import HistogramPanel from './components/HistogramPanel';
 import StackingPanel from './components/StackingPanel';
 import StatusBar from './components/StatusBar';
+import LogPanel from './components/LogPanel';
 
 const App: React.FC = () => {
   return (
@@ -19,9 +20,12 @@ const App: React.FC = () => {
           <FilePanel />
         </div>
 
-        {/* Center: Image preview */}
-        <div className="flex-1 min-w-0">
-          <ImagePreview />
+        {/* Center: Image preview + Log output */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <div className="flex-1 min-h-0">
+            <ImagePreview />
+          </div>
+          <LogPanel />
         </div>
 
         {/* Right sidebar: Histogram + Stacking settings */}

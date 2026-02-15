@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { useAppStore } from '../store';
 
 const StackingPanel: React.FC = () => {
@@ -16,6 +16,14 @@ const StackingPanel: React.FC = () => {
   const setProgress = useAppStore((s) => s.setProgress);
   const setResultImageId = useAppStore((s) => s.setResultImageId);
   const setError = useAppStore((s) => s.setError);
+
+  // Subscribe to pipeline progress updates from the CLI process
+  useEffect(() => {
+    const unsubscribe = window.astro.onProgress((data) => {
+      setProgress({ stage: data.stage, progress: data.percent });
+    });
+    return unsubscribe;
+  }, [setProgress]);
 
   const canStack = lights.length > 0 && !isProcessing;
 

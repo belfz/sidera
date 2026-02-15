@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type { FileInfo, FrameType, StackingConfig, StretchConfig, PipelineProgress } from './types';
 
+const MAX_LOG_LINES = 500;
+
 interface AppState {
   // ─── Frame lists ──────────────────────────────────────────────────────
   lights: FileInfo[];
@@ -32,6 +34,9 @@ interface AppState {
   progress: PipelineProgress | null;
   error: string | null;
 
+  // ─── Log output ───────────────────────────────────────────────────────
+  logLines: string[];
+
   // ─── Actions ──────────────────────────────────────────────────────────
   addFrames: (frameType: FrameType, files: FileInfo[]) => void;
   removeFrame: (frameType: FrameType, id: string) => void;
@@ -55,6 +60,9 @@ interface AppState {
   setProcessing: (processing: boolean) => void;
   setProgress: (progress: PipelineProgress | null) => void;
   setError: (error: string | null) => void;
+
+  addLogLine: (line: string) => void;
+  clearLog: () => void;
 }
 
 const frameListKey = (type: FrameType): keyof Pick<AppState, 'lights' | 'darks' | 'flats' | 'biases'> => {
@@ -94,6 +102,8 @@ export const useAppStore = create<AppState>((set) => ({
   isProcessing: false,
   progress: null,
   error: null,
+
+  logLines: [],
 
   addFrames: (frameType, files) =>
     set((state) => {
@@ -145,4 +155,16 @@ export const useAppStore = create<AppState>((set) => ({
   setProcessing: (isProcessing) => set({ isProcessing }),
   setProgress: (progress) => set({ progress }),
   setError: (error) => set({ error }),
+
+  addLogLine: (line) =>
+    set((state) => {
+      const newLines = [...state.logLines, line];
+      // Keep only the last MAX_LOG_LINES lines
+      if (newLines.length > MAX_LOG_LINES) {
+        return { logLines: newLines.slice(-MAX_LOG_LINES) };
+      }
+      return { logLines: newLines };
+    }),
+
+  clearLog: () => set({ logLines: [] }),
 }));

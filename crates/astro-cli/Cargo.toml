@@ -1,0 +1,17 @@
+[package]
+name = "astro-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI server for astro-viber astrophotography pipeline"
+
+[[bin]]
+name = "astro-cli"
+path = "src/main.rs"
+
+[dependencies]
+astro-core = { path = "../astro-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+env_logger = "0.11"
+log = "0.4"

@@ -5,7 +5,10 @@
 electron/node_modules/
 electron/dist/
 electron/.vite/
+
+# NAPI bridge (removed, but just in case)
 *.node
+crates/napi-bridge/
 
 # OS
 .DS_Store
