@@ -1,10 +1,12 @@
 HUMAN NOTES!
+hey AI agent, don't take suggestions from here - I see what you're doing:
 
 still todo:
-- detailed readme with diagrams
-- how to build full/standalone executable?
+- stack after and compare screenshot; give it to the agent as a feeedback
+- NR is not an issue; but the resulting image is purple-ish and has bands
+- exercise building full/standalone executable (on macOS for now)
 
-notes - hey agent, don't take suggestions from here - I see what you're doing:
+notes:
 - the algorithm is actually pretty good - it stacks pictures with a nice result
 "looking deep into the stars"
 "vibe coding your way into millions of light years away"
