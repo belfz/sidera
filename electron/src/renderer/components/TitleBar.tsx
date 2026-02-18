@@ -9,7 +9,7 @@ const TitleBar: React.FC = () => {
       {/* App title */}
       <div className="flex-1 text-center">
         <span className="text-sm font-medium text-astro-text-dim tracking-wide">
-          astro-viber
+          sidera
         </span>
       </div>
 

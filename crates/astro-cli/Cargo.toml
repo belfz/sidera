@@ -3,7 +3,7 @@ name = "astro-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CLI server for astro-viber astrophotography pipeline"
+description = "CLI server for Sidera astrophotography pipeline"
 
 [[bin]]
 name = "astro-cli"

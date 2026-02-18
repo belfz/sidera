@@ -21,7 +21,7 @@ let mainWindow: BrowserWindow | null = null;
 let fullLogHistory: string[] = [];
 
 // Temp directory for preview RGBA files
-const tempDir = path.join(os.tmpdir(), "astro-viber");
+const tempDir = path.join(os.tmpdir(), "sidera");
 
 function getCliBinaryPath(): string {
   if (process.env.NODE_ENV === "development" || !app.isPackaged) {
@@ -33,7 +33,7 @@ function getCliBinaryPath(): string {
 
 function startCliProcess(): void {
   const binPath = getCliBinaryPath();
-  console.log("[astro-viber] Starting CLI process:", binPath);
+  console.log("[sidera] Starting CLI process:", binPath);
 
   try {
     cliProcess = spawn(binPath, [], {
@@ -41,7 +41,7 @@ function startCliProcess(): void {
       env: { ...process.env, RUST_LOG: "info" },
     });
   } catch (err: any) {
-    console.error("[astro-viber] Failed to spawn CLI process:", err?.message);
+    console.error("[sidera] Failed to spawn CLI process:", err?.message);
     return;
   }
 
@@ -92,7 +92,7 @@ function startCliProcess(): void {
 
   cliProcess.on("exit", (code, signal) => {
     console.error(
-      `[astro-viber] CLI process exited (code=${code}, signal=${signal})`,
+      `[sidera] CLI process exited (code=${code}, signal=${signal})`,
     );
 
     for (const [, pending] of pendingRequests) {
@@ -112,7 +112,7 @@ function startCliProcess(): void {
   });
 
   cliProcess.on("error", (err) => {
-    console.error("[astro-viber] CLI process error:", err.message);
+    console.error("[sidera] CLI process error:", err.message);
     const msg = `[system] Processing engine error: ${err.message}`;
     fullLogHistory.push(msg);
     mainWindow?.webContents.send("cli:log", msg);
@@ -307,7 +307,7 @@ app.whenReady().then(() => {
   ipcMain.handle("native:save-logs", async () => {
     const result = await dialog.showSaveDialog(mainWindow!, {
       title: "Save Diagnostic Logs",
-      defaultPath: `astro-viber-log-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`,
+      defaultPath: `sidera-log-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`,
       filters: [{ name: "Text Files", extensions: ["txt", "log"] }],
     });
     if (result.canceled || !result.filePath) return false;

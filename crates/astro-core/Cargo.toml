@@ -3,7 +3,7 @@ name = "astro-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Core astrophotography image processing library for astro-viber"
+description = "Core astrophotography image processing library for Sidera"
 
 [dependencies]
 byteorder = "1"

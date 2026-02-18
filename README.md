@@ -1,8 +1,8 @@
-# astro-viber
+# Sidera
 
 A modern astrophotography image stacking tool built from scratch in Rust with an Electron UI. No C/C++ dependencies for the core processing — the entire pipeline (FITS I/O, calibration, star detection, alignment, stacking, stretching) is pure Rust.
 
-> "vibe coding your way into millions of light years away"
+> *sidera* — Latin for "stars"
 
 ---
 
@@ -181,7 +181,7 @@ cargo test
 ### Project structure
 
 ```
-astro-viber/
+sidera/
 ├── Cargo.toml                  # Workspace root
 ├── crates/
 │   ├── astro-core/             # Pure Rust processing library
@@ -244,8 +244,8 @@ You'll need to include the `astro-cli` binary in the packaged app. Add this to `
 ```json
 {
   "build": {
-    "appId": "com.astro-viber.app",
-    "productName": "astro-viber",
+    "appId": "com.sidera.app",
+    "productName": "sidera",
     "extraResources": [
       {
         "from": "../target/release/astro-cli",

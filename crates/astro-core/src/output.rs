@@ -66,7 +66,7 @@ pub fn save_fits(path: &Path, image: &ImageData) -> Result<()> {
     let mut headers = HashMap::new();
     headers.insert(
         "CREATOR".to_string(),
-        FitsValue::String("astro-viber".to_string()),
+        FitsValue::String("sidera".to_string()),
     );
 
     fits_io::write_fits(path, image, &headers)

@@ -1,4 +1,4 @@
-/** Type definitions for astro-viber */
+/** Type definitions for Sidera */
 
 export type FrameType = 'Light' | 'Dark' | 'Flat' | 'Bias' | 'Unknown';
 

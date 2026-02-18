@@ -1,4 +1,4 @@
-//! astro-cli: JSON-over-stdio server for astro-viber.
+//! astro-cli: JSON-over-stdio server for Sidera.
 //!
 //! Runs as a long-lived child process of the Electron app. Reads JSON
 //! commands from stdin (one per line) and writes JSON responses to stdout.
@@ -86,7 +86,7 @@ fn main() {
 
     eprintln!("[astro-cli] Server starting");
 
-    let temp_dir = std::env::temp_dir().join("astro-viber");
+    let temp_dir = std::env::temp_dir().join("sidera");
     std::fs::create_dir_all(&temp_dir).ok();
 
     let mut store = ImageStore::new();
