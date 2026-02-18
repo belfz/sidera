@@ -123,6 +123,21 @@ pub fn create_master_flat(
 
     let mut master = stacking::stack_images(&calibrated_frames, StackMethod::Median)?;
 
+    // Check that the flat has meaningful signal after bias subtraction.
+    // If the mean is near zero, the bias may be incorrect (e.g., the user
+    // loaded flat frames as biases), which would produce an all-zero flat
+    // and destroy every light frame when divided.
+    let global_mean: f64 = master.data.iter().map(|&v| v as f64).sum::<f64>()
+        / master.data.len().max(1) as f64;
+    if global_mean.abs() < 1.0 {
+        log::warn!(
+            "Master flat has near-zero mean ({:.2}) after bias subtraction — \
+             bias frames may be incorrect. Rebuilding flat without bias subtraction.",
+            global_mean
+        );
+        master = stacking::stack_images(frames, StackMethod::Median)?;
+    }
+
     if master.channels == 1 {
         if let Some(pattern) = bayer_pattern {
             normalize_flat_bayer(&mut master, pattern);

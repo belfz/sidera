@@ -170,17 +170,17 @@ fn robust_normalize_bounds(image: &ImageData) -> (f32, f32) {
     // LOW bound: noise floor = median − 2.8σ
     let low = median - 2.8 * sigma;
 
-    // HIGH bound: use median + 100σ to capture the full useful dynamic range.
-    // P99.9% is too close to the sky median for deep-sky images (stars are
-    // only 0.01% of pixels), which compresses the range and makes the sky
-    // appear at ~0.4 in normalized space instead of near 0.
-    // Using a sigma-based bound ensures we include stars and preserve
-    // enough headroom for the stretch to work aggressively.
-    let sigma_high = median + 100.0 * sigma;
-    // Cap at the actual 99.99th percentile to avoid extreme outliers
-    let p_high_idx = ((n as f64 * 0.9999) as usize).min(n - 1);
-    let p_high = sorted[p_high_idx];
-    let high = sigma_high.min(p_high).max(median + 10.0 * sigma);
+    // HIGH bound: use a sigma-based bound to capture the useful signal
+    // for deep-sky objects, NOT the full star range. Stars are extreme
+    // outliers (even P99.8% can be 700+ ADU) that compress the faint
+    // galaxy signal into a tiny sliver of [0,1] if included.
+    //
+    // 15σ above the median captures all extended object signal (galaxies
+    // are typically 2-10× above sky noise) while clipping bright star
+    // cores to white. This puts the sky at ~15% of the normalized range,
+    // giving the MTF stretch plenty of room to separate faint galaxy
+    // arms from the background.
+    let high = (median + 15.0 * sigma).max(median + 1.0);
 
     log::info!(
         "Robust normalize (luminance): median={:.2}, MAD={:.4}, sigma={:.4}, low={:.2}, high={:.2}",

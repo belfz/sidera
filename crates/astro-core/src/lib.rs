@@ -289,24 +289,37 @@ impl Pipeline {
         // ─── POST-PROCESSING ─────────────────────────────────────────────
         report(PipelineStage::PostProcessing, 0.0);
 
-        // 1. Background gradient extraction
+        // 1. Smart crop — remove low-coverage borders FIRST so that
+        //    gradient extraction and neutralization operate on clean data
+        //    without edge artifacts that skew their statistics.
+        log::info!("Cropping borders (coverage-based)...");
+        result = smart_crop_by_coverage(&result, &count, w, h, ch);
+        report(PipelineStage::PostProcessing, 0.2);
+
+        // 2. Background gradient extraction
         log::info!("Extracting background gradient...");
         result = gradient::extract_gradient(&result);
-        report(PipelineStage::PostProcessing, 0.25);
+        let post_gradient_bgs = estimate_frame_background_per_channel(&result);
+        log::info!("Post-gradient per-channel backgrounds: {:?}", post_gradient_bgs);
+        report(PipelineStage::PostProcessing, 0.4);
 
-        // 2. Background neutralization (white balance)
+        // 3. Background neutralization (white balance)
         if result.channels == 3 {
             log::info!("Neutralizing background color...");
             neutralize_background(&mut result);
+            let post_neutral_bgs = estimate_frame_background_per_channel(&result);
+            log::info!("Post-neutralize per-channel backgrounds: {:?}", post_neutral_bgs);
         }
-        report(PipelineStage::PostProcessing, 0.5);
+        report(PipelineStage::PostProcessing, 0.6);
 
-        // 3. Crop alignment borders
-        log::info!("Cropping borders...");
-        result = auto_crop_borders(&result);
-        report(PipelineStage::PostProcessing, 0.75);
+        // 4. SCNR — remove residual magenta cast
+        if result.channels == 3 {
+            log::info!("Applying SCNR (magenta removal)...");
+            scnr_average_neutral(&mut result);
+        }
+        report(PipelineStage::PostProcessing, 0.8);
 
-        // 4. Noise reduction
+        // 5. Noise reduction
         log::info!("Reducing noise...");
         result = reduce_noise(&result);
         report(PipelineStage::PostProcessing, 1.0);
@@ -403,21 +416,78 @@ impl Pipeline {
 
 // ─── Post-processing helpers ─────────────────────────────────────────────────
 
-/// Crop 8% from each edge to remove alignment border artifacts.
-fn auto_crop_borders(image: &ImageData) -> ImageData {
-    let w = image.width;
-    let h = image.height;
-    let ch = image.channels;
-    let crop_pct = 0.08;
+/// Crop to the region with sufficient stacking coverage.
+///
+/// Uses the per-pixel stacking count to find the bounding box where at
+/// least 80% of the maximum frame count was reached. This removes the
+/// ragged border areas where only a few shifted frames overlap, which
+/// cause color banding artifacts (green/magenta bands at edges).
+fn smart_crop_by_coverage(
+    image: &ImageData,
+    count: &[u32],
+    orig_w: usize,
+    orig_h: usize,
+    ch: usize,
+) -> ImageData {
+    let max_count = count.iter().copied().max().unwrap_or(1);
+    let threshold = (max_count as f64 * 0.80) as u32;
 
-    let left = (w as f64 * crop_pct) as usize;
-    let right = w - left;
-    let top = (h as f64 * crop_pct) as usize;
-    let bottom = h - top;
+    // Per-pixel coverage: minimum count across all channels
+    let mut covered = vec![false; orig_w * orig_h];
+    for y in 0..orig_h {
+        for x in 0..orig_w {
+            let base = (y * orig_w + x) * ch;
+            let min_ch_count = (0..ch)
+                .map(|c| count[base + c])
+                .min()
+                .unwrap_or(0);
+            covered[y * orig_w + x] = min_ch_count >= threshold;
+        }
+    }
+
+    // Find bounding box of covered region
+    let mut left = orig_w;
+    let mut right = 0usize;
+    let mut top = orig_h;
+    let mut bottom = 0usize;
+
+    for y in 0..orig_h {
+        for x in 0..orig_w {
+            if covered[y * orig_w + x] {
+                left = left.min(x);
+                right = right.max(x);
+                top = top.min(y);
+                bottom = bottom.max(y);
+            }
+        }
+    }
+
+    // Fall back to 5% crop if coverage analysis fails
+    if right <= left || bottom <= top {
+        let margin_w = orig_w / 20;
+        let margin_h = orig_h / 20;
+        left = margin_w;
+        right = orig_w.saturating_sub(margin_w);
+        top = margin_h;
+        bottom = orig_h.saturating_sub(margin_h);
+    }
+
+    // Small margin to trim partial-coverage edge pixels
+    let margin = 8;
+    left = (left + margin).min(right.saturating_sub(1));
+    top = (top + margin).min(bottom.saturating_sub(1));
+    right = right.saturating_sub(margin).max(left + 1);
+    bottom = bottom.saturating_sub(margin).max(top + 1);
+
     let new_w = right - left;
     let new_h = bottom - top;
 
-    log::info!("Cropping: {}x{} → {}x{}", w, h, new_w, new_h);
+    log::info!(
+        "Smart crop: {}x{} → {}x{} (threshold: {}/{} frames, L={} T={} R={} B={})",
+        orig_w, orig_h, new_w, new_h,
+        threshold, max_count,
+        left, top, orig_w - right, orig_h - bottom
+    );
 
     let mut cropped = ImageData::new(new_w, new_h, ch);
     for y in 0..new_h {
@@ -476,6 +546,44 @@ fn neutralize_background(image: &mut ImageData) {
             image.data[i * image.channels + c] += offset;
         }
     }
+}
+
+/// Subtractive Chromatic Noise Reduction — "Average Neutral" method.
+///
+/// For each pixel, if R and B both exceed G (i.e. the pixel appears
+/// magenta), reduce R and B toward their average with G. This targets
+/// only the chromatic noise / cast without affecting pixels that are
+/// genuinely red or blue.
+///
+/// The protection factor ensures only clearly magenta pixels are
+/// affected; borderline or faintly tinted pixels are left alone.
+fn scnr_average_neutral(image: &mut ImageData) {
+    if image.channels < 3 { return; }
+
+    let mut affected = 0u64;
+    let total = image.pixel_count() as u64;
+
+    for i in 0..image.pixel_count() {
+        let base = i * image.channels;
+        let r = image.data[base];
+        let g = image.data[base + 1];
+        let b = image.data[base + 2];
+
+        // Only act on pixels where both R and B exceed G (magenta).
+        // A pixel that's simply red (R > G but B < G) or blue (B > G
+        // but R < G) is left untouched.
+        if r > g && b > g {
+            // "Average neutral": set the excess channels to the average
+            // of the original value and the green value. This is gentler
+            // than full SCNR which would clamp to G outright.
+            image.data[base]     = (r + g) * 0.5;
+            image.data[base + 2] = (b + g) * 0.5;
+            affected += 1;
+        }
+    }
+
+    let pct = if total > 0 { affected as f64 / total as f64 * 100.0 } else { 0.0 };
+    log::info!("SCNR: adjusted {}/{} pixels ({:.1}%)", affected, total, pct);
 }
 
 /// Estimate per-channel frame background using sigma-clipped median.
