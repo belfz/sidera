@@ -17,6 +17,9 @@ let isQuitting = false;
 
 let mainWindow: BrowserWindow | null = null;
 
+// Full log history (not truncated) for diagnostic export
+let fullLogHistory: string[] = [];
+
 // Temp directory for preview RGBA files
 const tempDir = path.join(os.tmpdir(), "astro-viber");
 
@@ -82,6 +85,7 @@ function startCliProcess(): void {
     const text = data.toString();
     const lines = text.split("\n").filter((l) => l.trim().length > 0);
     for (const line of lines) {
+      fullLogHistory.push(line);
       mainWindow?.webContents.send("cli:log", line);
     }
   });
@@ -100,20 +104,18 @@ function startCliProcess(): void {
     cliProcess = null;
 
     if (!isQuitting) {
-      mainWindow?.webContents.send(
-        "cli:log",
-        `[system] Processing engine exited (code ${code}). Restarting...`,
-      );
+      const msg = `[system] Processing engine exited (code ${code}). Restarting...`;
+      fullLogHistory.push(msg);
+      mainWindow?.webContents.send("cli:log", msg);
       setTimeout(startCliProcess, 1000);
     }
   });
 
   cliProcess.on("error", (err) => {
     console.error("[astro-viber] CLI process error:", err.message);
-    mainWindow?.webContents.send(
-      "cli:log",
-      `[system] Processing engine error: ${err.message}`,
-    );
+    const msg = `[system] Processing engine error: ${err.message}`;
+    fullLogHistory.push(msg);
+    mainWindow?.webContents.send("cli:log", msg);
   });
 }
 
@@ -301,6 +303,18 @@ app.whenReady().then(() => {
       });
     },
   );
+
+  ipcMain.handle("native:save-logs", async () => {
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: "Save Diagnostic Logs",
+      defaultPath: `astro-viber-log-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`,
+      filters: [{ name: "Text Files", extensions: ["txt", "log"] }],
+    });
+    if (result.canceled || !result.filePath) return false;
+    const content = fullLogHistory.join("\n") + "\n";
+    fs.writeFileSync(result.filePath, content, "utf-8");
+    return true;
+  });
 
   ipcMain.handle(
     "native:run-pipeline",

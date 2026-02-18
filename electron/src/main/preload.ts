@@ -84,4 +84,7 @@ contextBridge.exposeInMainWorld('astro', {
     ipcRenderer.on('cli:progress', handler);
     return () => ipcRenderer.removeListener('cli:progress', handler);
   },
+
+  /** Save the full (untruncated) log history to a file via save dialog. */
+  saveLogs: () => ipcRenderer.invoke('native:save-logs'),
 });

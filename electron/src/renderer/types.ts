@@ -91,6 +91,9 @@ export interface AstroAPI {
     stackingConfig: StackingConfig;
   }) => Promise<string>;
 
+  /** Save the full (untruncated) log history to a file. Returns true if saved. */
+  saveLogs: () => Promise<boolean>;
+
   /** Subscribe to log lines from the processing engine. Returns unsubscribe fn. */
   onLog: (callback: (line: string) => void) => () => void;
 

@@ -111,7 +111,7 @@ impl Pipeline {
         log::info!("Bayer pattern: {:?}", effective_bayer);
 
         // ─── Load calibration frames & create masters ────────────────────
-        let cal = self.create_calibration_masters(&report)?;
+        let cal = self.create_calibration_masters(&report, effective_bayer)?;
 
         // ─── PASS 1: Registration ────────────────────────────────────────
         // Load each light one at a time, calibrate+demosaic, detect stars.
@@ -223,9 +223,10 @@ impl Pipeline {
         let mut sum = vec![0.0f64; total];
         let mut count = vec![0u32; total];
 
-        // First, compute reference background for equalization
+        // Compute per-channel reference backgrounds for equalization
         let ref_frame = self.load_one_frame(&self.light_paths[ref_idx], &cal, effective_bayer)?;
-        let ref_bg = estimate_frame_background(&ref_frame);
+        let ref_bgs = estimate_frame_background_per_channel(&ref_frame);
+        log::info!("Reference frame backgrounds: {:?}", ref_bgs);
         drop(ref_frame);
 
         let mut stacked_count = 0u32;
@@ -250,16 +251,20 @@ impl Pipeline {
             };
             drop(frame);
 
-            // Background equalization
-            let frame_bg = estimate_frame_background(&warped);
-            let bg_delta = ref_bg - frame_bg;
+            // Per-channel background equalization
+            let frame_bgs = estimate_frame_background_per_channel(&warped);
+            let bg_deltas: Vec<f32> = ref_bgs.iter()
+                .zip(frame_bgs.iter())
+                .map(|(r, f)| r - f)
+                .collect();
 
             // Accumulate (skip zero-fill pixels from alignment borders)
             for j in 0..total {
                 let v = warped.data[j];
                 if v.abs() > 0.5 {
-                    // Valid pixel — add with background correction
-                    sum[j] += (v + bg_delta) as f64;
+                    let c = j % ch;
+                    let delta = if c < bg_deltas.len() { bg_deltas[c] } else { 0.0 };
+                    sum[j] += (v + delta) as f64;
                     count[j] += 1;
                 }
             }
@@ -276,6 +281,10 @@ impl Pipeline {
             .collect();
 
         let mut result = ImageData::from_data(w, h, ch, data)?;
+
+        // Log per-channel statistics of the stacked result
+        let stacked_bgs = estimate_frame_background_per_channel(&result);
+        log::info!("Stacked result per-channel backgrounds: {:?}", stacked_bgs);
 
         // ─── POST-PROCESSING ─────────────────────────────────────────────
         report(PipelineStage::PostProcessing, 0.0);
@@ -334,6 +343,7 @@ impl Pipeline {
     fn create_calibration_masters(
         &self,
         report: &dyn Fn(PipelineStage, f32),
+        effective_bayer: Option<bayer::BayerPattern>,
     ) -> Result<calibration::CalibrationFrames> {
         let load_raw = |paths: &[PathBuf], stage: PipelineStage| -> Result<Vec<ImageData>> {
             let mut frames = Vec::new();
@@ -363,7 +373,7 @@ impl Pipeline {
 
         report(PipelineStage::CreatingMasterFlat, 0.0);
         let master_flat = if !flat_frames.is_empty() {
-            Some(calibration::create_master_flat(&flat_frames, master_bias.as_ref())?)
+            Some(calibration::create_master_flat(&flat_frames, master_bias.as_ref(), effective_bayer)?)
         } else { None };
         report(PipelineStage::CreatingMasterFlat, 1.0);
 
@@ -420,12 +430,18 @@ fn auto_crop_borders(image: &ImageData) -> ImageData {
     cropped
 }
 
-/// Neutralize background color (white balance for OSC cameras).
+/// Neutralize background color using additive correction.
+///
+/// Computes the sigma-clipped median of each RGB channel's background,
+/// then shifts each channel so all backgrounds equal a common reference level.
+/// Additive correction preserves signal colors — a star with R=500, G=450,
+/// B=480 keeps those relative ratios, unlike multiplicative scaling which
+/// would distort them.
 fn neutralize_background(image: &mut ImageData) {
     if image.channels < 3 { return; }
 
     let mut channel_medians = Vec::new();
-    for c in 0..image.channels {
+    for c in 0..image.channels.min(3) {
         let mut values: Vec<f32> = (0..image.pixel_count())
             .map(|i| image.data[i * image.channels + c])
             .filter(|v| *v > 0.5)
@@ -447,49 +463,62 @@ fn neutralize_background(image: &mut ImageData) {
         channel_medians.push(med);
     }
 
-    let ref_level: f32 = channel_medians.iter().sum::<f32>() / channel_medians.len() as f32;
-    log::info!("Neutralize: R={:.2}, G={:.2}, B={:.2} → ref={:.2}",
+    // Use the green channel as reference — it has the best SNR (most
+    // photosites in Bayer pattern, highest QE) and is the standard
+    // reference in tools like Siril and PixInsight.
+    let ref_level = channel_medians[1];
+    log::info!("Neutralize (additive): R={:.2}, G={:.2}, B={:.2} → ref=G={:.2}",
         channel_medians[0], channel_medians[1], channel_medians[2], ref_level);
 
     for c in 0..image.channels.min(3) {
-        let med = channel_medians[c];
-        if med.abs() < 1e-6 { continue; }
-        let scale = ref_level / med;
+        let offset = ref_level - channel_medians[c];
         for i in 0..image.pixel_count() {
-            image.data[i * image.channels + c] *= scale;
+            image.data[i * image.channels + c] += offset;
         }
     }
 }
 
-/// Estimate frame background using sigma-clipped median on luminance.
-fn estimate_frame_background(image: &ImageData) -> f32 {
-    let mut values: Vec<f32> = if image.channels >= 3 {
-        (0..image.pixel_count())
-            .map(|i| {
-                0.2126 * image.data[i * image.channels]
-                    + 0.7152 * image.data[i * image.channels + 1]
-                    + 0.0722 * image.data[i * image.channels + 2]
-            })
+/// Estimate per-channel frame background using sigma-clipped median.
+///
+/// Returns a Vec of per-channel medians. For a 3-channel RGB image this
+/// returns [R_bg, G_bg, B_bg]. Using per-channel backgrounds prevents the
+/// luminance-weighted estimate from systematically favoring green (71.5%
+/// weight), which was causing R and B backgrounds to be under-corrected
+/// during stacking — producing a green color cast in the final image.
+fn estimate_frame_background_per_channel(image: &ImageData) -> Vec<f32> {
+    let ch = image.channels;
+    (0..ch).map(|c| {
+        let mut values: Vec<f32> = (0..image.pixel_count())
+            .map(|i| image.data[i * ch + c])
             .filter(|v| *v > 0.5)
-            .collect()
-    } else {
-        image.data.iter().copied().filter(|v| *v > 0.5).collect()
-    };
+            .collect();
 
-    for _ in 0..3 {
+        for _ in 0..3 {
+            values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let n = values.len();
+            if n < 10 { break; }
+            let median = values[n / 2];
+            let mut devs: Vec<f32> = values.iter().map(|&v| (v - median).abs()).collect();
+            devs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let sigma = 1.4826 * devs[n / 2];
+            values.retain(|&v| v >= median - 3.0 * sigma && v <= median + 3.0 * sigma);
+        }
+
+        if values.is_empty() { return 0.0; }
         values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let n = values.len();
-        if n < 10 { break; }
-        let median = values[n / 2];
-        let mut devs: Vec<f32> = values.iter().map(|&v| (v - median).abs()).collect();
-        devs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let sigma = 1.4826 * devs[n / 2];
-        values.retain(|&v| v >= median - 3.0 * sigma && v <= median + 3.0 * sigma);
-    }
+        values[values.len() / 2]
+    }).collect()
+}
 
-    if values.is_empty() { return 0.0; }
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    values[values.len() / 2]
+/// Estimate frame background as a single scalar (luminance-based).
+/// Used for noise reduction threshold, where a single value suffices.
+fn estimate_frame_background(image: &ImageData) -> f32 {
+    let bgs = estimate_frame_background_per_channel(image);
+    if bgs.len() >= 3 {
+        0.2126 * bgs[0] + 0.7152 * bgs[1] + 0.0722 * bgs[2]
+    } else {
+        bgs[0]
+    }
 }
 
 /// Simple noise reduction: selective median filter.

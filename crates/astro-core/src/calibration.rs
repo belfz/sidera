@@ -6,6 +6,7 @@
 //! 3. Master Flat = median stack of flat frames − Master Bias, normalized to mean=1.0
 //! 4. Calibrated Light = (Light − Master Bias − Master Dark) / Master Flat
 
+use crate::bayer::BayerPattern;
 use crate::error::{AstroError, Result};
 use crate::image::ImageData;
 use crate::stacking::{self, StackMethod};
@@ -89,9 +90,16 @@ pub fn create_master_dark(
 ///
 /// Flat frames capture vignetting, dust, and optical imperfections.
 /// They should be taken through the same optical path as the lights.
+///
+/// If a Bayer pattern is provided and the flat is mono, normalization is done
+/// per Bayer sub-channel (R, G, B independently) to avoid distorting the
+/// sensor's color response. Without this, dividing a Bayer light by a
+/// globally-normalized flat systematically boosts R and B while suppressing G,
+/// producing a purple/magenta cast.
 pub fn create_master_flat(
     frames: &[ImageData],
     master_bias: Option<&ImageData>,
+    bayer_pattern: Option<BayerPattern>,
 ) -> Result<ImageData> {
     if frames.is_empty() {
         return Err(AstroError::NoFrames {
@@ -115,8 +123,15 @@ pub fn create_master_flat(
 
     let mut master = stacking::stack_images(&calibrated_frames, StackMethod::Median)?;
 
-    // Normalize to mean = 1.0 (per channel)
-    normalize_flat(&mut master);
+    if master.channels == 1 {
+        if let Some(pattern) = bayer_pattern {
+            normalize_flat_bayer(&mut master, pattern);
+        } else {
+            normalize_flat(&mut master);
+        }
+    } else {
+        normalize_flat(&mut master);
+    }
 
     Ok(master)
 }
@@ -289,6 +304,7 @@ pub fn add_images(a: &ImageData, b: &ImageData) -> Result<ImageData> {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /// Normalize a flat frame so that the mean of each channel equals 1.0.
+/// For multi-channel (already demosaiced) flats, this is correct as-is.
 fn normalize_flat(flat: &mut ImageData) {
     for c in 0..flat.channels {
         let sum: f64 = (0..flat.pixel_count())
@@ -299,6 +315,58 @@ fn normalize_flat(flat: &mut ImageData) {
         if mean > 0.0 {
             for i in 0..flat.pixel_count() {
                 let idx = i * flat.channels + c;
+                flat.data[idx] = (flat.data[idx] as f64 / mean) as f32;
+            }
+        }
+    }
+}
+
+/// Normalize a mono Bayer flat per sub-channel so that each color's mean = 1.0.
+///
+/// Without this, the global mean is dominated by the brighter green pixels
+/// (2× count, higher QE). After global normalization, G values end up > 1.0
+/// and R/B values < 1.0. Dividing a light by this flat then suppresses green
+/// and boosts red/blue — creating a purple/magenta color cast.
+///
+/// Per-Bayer-channel normalization ensures the flat only corrects spatial
+/// illumination variations (vignetting, dust) within each color, without
+/// altering the sensor's native color response.
+fn normalize_flat_bayer(flat: &mut ImageData, pattern: BayerPattern) {
+    let w = flat.width;
+    let h = flat.height;
+
+    // Accumulate sum and count for each Bayer color (0=R, 1=G, 2=B)
+    let mut sums = [0.0f64; 3];
+    let mut counts = [0u64; 3];
+
+    for row in 0..h {
+        for col in 0..w {
+            let color = pattern.color_at(row, col);
+            let val = flat.get(col, row, 0) as f64;
+            sums[color] += val;
+            counts[color] += 1;
+        }
+    }
+
+    let mut means = [0.0f64; 3];
+    for color in 0..3 {
+        if counts[color] > 0 {
+            means[color] = sums[color] / counts[color] as f64;
+        }
+    }
+
+    log::info!(
+        "Flat normalization (Bayer {:?}): R_mean={:.2}, G_mean={:.2}, B_mean={:.2}",
+        pattern, means[0], means[1], means[2]
+    );
+
+    // Normalize each pixel by the mean of its own color channel
+    for row in 0..h {
+        for col in 0..w {
+            let color = pattern.color_at(row, col);
+            let mean = means[color];
+            if mean > 0.0 {
+                let idx = row * w + col;
                 flat.data[idx] = (flat.data[idx] as f64 / mean) as f32;
             }
         }

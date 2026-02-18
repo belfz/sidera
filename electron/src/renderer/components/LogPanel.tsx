@@ -45,13 +45,23 @@ const LogPanel: React.FC = () => {
             </div>
           )}
         </div>
-        <button
-          className="text-xs text-astro-text-dim hover:text-astro-text transition-colors"
-          onClick={clearLog}
-          title="Clear log"
-        >
-          Clear
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="text-xs text-astro-text-dim hover:text-astro-accent transition-colors disabled:opacity-30"
+            onClick={() => window.astro.saveLogs()}
+            disabled={logLines.length === 0}
+            title="Save logs to file for diagnostics"
+          >
+            Save Logs
+          </button>
+          <button
+            className="text-xs text-astro-text-dim hover:text-astro-text transition-colors"
+            onClick={clearLog}
+            title="Clear log"
+          >
+            Clear
+          </button>
+        </div>
       </div>
 
       {/* Log content */}

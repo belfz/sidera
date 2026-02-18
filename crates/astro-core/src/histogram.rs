@@ -199,9 +199,12 @@ fn robust_normalize_bounds(image: &ImageData) -> (f32, f32) {
     (low, high)
 }
 
-/// Apply robust percentile-based normalization to an image, returning a new
-/// normalized copy. This is used consistently by both auto_stretch and
-/// apply_stretch to ensure they agree on the same data mapping.
+/// Apply robust normalization to map the image to [0, 1].
+///
+/// Color balance is NOT adjusted here — that's the responsibility of
+/// `neutralize_background` in the pipeline's post-processing. The stretch
+/// should faithfully display whatever color balance the data has, using
+/// a single luminance-derived (low, high) range for all channels.
 fn robust_normalize(image: &ImageData) -> ImageData {
     let (low, high) = robust_normalize_bounds(image);
     let range = high - low;
@@ -236,13 +239,19 @@ pub fn auto_stretch(image: &ImageData) -> StretchParams {
     // hot pixels from compressing the useful signal into a narrow range.
     let work = robust_normalize(image);
 
-    // Get the luminance channel for statistics
+    // Get the luminance channel for statistics.
+    // Filter out near-zero pixels — these are invalid data from alignment
+    // borders (zero-fill) or gradient extraction artifacts (negative values
+    // clamped to 0). Including them would drag the median to near-zero,
+    // making the stretch compute m≈0.5 (linear, no stretch).
+    let zero_thresh = 0.005;
     let lum_data: Vec<f32> = if work.channels == 1 {
-        work.data.clone()
+        work.data.iter().copied()
+            .filter(|v| *v > zero_thresh)
+            .collect()
     } else {
-        // Compute luminance inline to avoid allocating a full ImageData
         (0..work.pixel_count())
-            .map(|i| {
+            .filter_map(|i| {
                 let r = work.data[i * work.channels];
                 let g = work.data[i * work.channels + 1];
                 let b = if work.channels >= 3 {
@@ -250,7 +259,8 @@ pub fn auto_stretch(image: &ImageData) -> StretchParams {
                 } else {
                     0.0
                 };
-                0.2126 * r + 0.7152 * g + 0.0722 * b
+                let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                if lum > zero_thresh { Some(lum) } else { None }
             })
             .collect()
     };
@@ -298,7 +308,7 @@ pub fn auto_stretch(image: &ImageData) -> StretchParams {
     // Solve for midtone balance 'm' such that MTF(normalized_median, m) = target_median
     // MTF(x, m) = (m-1)*x / ((2m-1)*x - m)
     // Solving: m = x*(target - 1) / (2*target*x - target - x)
-    let midtones = if normalized_median > 0.001 && normalized_median < 0.999 {
+    let midtones = if normalized_median >= 0.001 && normalized_median <= 0.999 {
         let x = normalized_median;
         let t = target_median;
         let m = x * (t - 1.0) / (2.0 * t * x - t - x);

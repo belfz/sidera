@@ -67,7 +67,7 @@ impl BayerPattern {
 
     /// Returns which color a given pixel position belongs to.
     /// 0 = Red, 1 = Green, 2 = Blue.
-    fn color_at(self, row: usize, col: usize) -> usize {
+    pub fn color_at(self, row: usize, col: usize) -> usize {
         let (rr, rc) = self.red_offset();
         let (br, bc) = self.blue_offset();
         let pr = row % 2;
