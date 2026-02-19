@@ -115,24 +115,26 @@ Available stacking methods:
 
 ### 5. Post-Processing
 
-After stacking, four automatic corrections are applied:
+After stacking, five automatic corrections are applied in this order:
 
-1. **Background gradient extraction** — Models and subtracts the smooth sky background (light pollution, vignetting) using a 16-point grid with sigma-clipped sampling and bilinear interpolation.
+1. **Smart crop by coverage** — Uses the per-pixel stacking count to find the bounding box where at least 80% of frames contributed, trimming ragged low-coverage borders that cause color banding artifacts. Runs first so downstream steps operate on clean data.
 
-2. **Background neutralization** — Equalizes the per-channel sky background levels to remove color casts from OSC cameras (automatic white balance).
+2. **Background gradient extraction** — Models and subtracts the smooth sky background (light pollution, vignetting) using a 16-point grid with sigma-clipped sampling and bilinear interpolation.
 
-3. **Border cropping** — Removes 8% from each edge to eliminate alignment artifacts (zero-fill borders from frame warping).
+3. **Background neutralization** — Computes the sigma-clipped median background of each RGB channel and applies an additive correction to equalize them, using the green channel as reference. Additive (not multiplicative) correction preserves signal colors.
 
-4. **Noise reduction** — Selective 3×3 median filter applied only to background pixels (below sky + 5σ). Stars and bright features are left untouched.
+4. **SCNR (Subtractive Chromatic Noise Reduction)** — Removes residual magenta cast using the "Average Neutral" method: for pixels where both R and B exceed G, reduces them toward the average of their value and G. Genuinely red or blue pixels are left untouched.
+
+5. **Noise reduction** — Selective 3×3 median filter applied only to background pixels (below sky + 5σ). Stars and bright features are left untouched.
 
 ### 6. Visualization
 
 The result is displayed with a **PixInsight-style Screen Transfer Function (STF)** auto-stretch:
 
-1. Robust normalization using luminance-based median/MAD statistics (avoids mixing RGB offsets)
+1. Robust normalization using luminance-based median/MAD statistics with a 15σ upper bound — clips bright star cores to white but preserves all extended object signal (galaxies, nebulae)
 2. Shadow clipping at median − 2.8σ (noise floor)
 3. Midtone transfer function mapping the sky background to ~10% brightness
-4. This aggressively reveals faint extended objects (galaxies, nebulae) that are invisible in the linear data
+4. Near-zero pixels (alignment borders, gradient artifacts) are filtered from statistics to prevent contamination
 
 ---
 
