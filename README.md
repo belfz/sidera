@@ -1,4 +1,4 @@
-# Sidera
+# ✨🔭📷 Sidera
 
 A modern astrophotography image stacking tool built from scratch in Rust with an Electron UI. No C/C++ dependencies for the core processing — the entire pipeline (FITS I/O, calibration, star detection, alignment, stacking, stretching) is pure Rust.
 
