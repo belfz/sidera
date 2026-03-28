@@ -416,12 +416,14 @@ impl Pipeline {
 
 // ─── Post-processing helpers ─────────────────────────────────────────────────
 
-/// Crop to the region with sufficient stacking coverage.
+/// Crop to the region with sufficient stacking coverage, then trim any
+/// remaining columns/rows with anomalous per-channel backgrounds.
 ///
-/// Uses the per-pixel stacking count to find the bounding box where at
-/// least 80% of the maximum frame count was reached. This removes the
-/// ragged border areas where only a few shifted frames overlap, which
-/// cause color banding artifacts (green/magenta bands at edges).
+/// Two-stage approach:
+/// 1. Coverage crop: find the bounding box where ≥95% of frames contributed.
+/// 2. Background anomaly scan: scan columns/rows from each edge inward,
+///    trimming until the per-channel background matches the interior.
+///    This catches the color banding that survives coverage cropping.
 fn smart_crop_by_coverage(
     image: &ImageData,
     count: &[u32],
@@ -430,7 +432,7 @@ fn smart_crop_by_coverage(
     ch: usize,
 ) -> ImageData {
     let max_count = count.iter().copied().max().unwrap_or(1);
-    let threshold = (max_count as f64 * 0.80) as u32;
+    let threshold = (max_count as f64 * 0.95) as u32;
 
     // Per-pixel coverage: minimum count across all channels
     let mut covered = vec![false; orig_w * orig_h];
@@ -479,14 +481,44 @@ fn smart_crop_by_coverage(
     right = right.saturating_sub(margin).max(left + 1);
     bottom = bottom.saturating_sub(margin).max(top + 1);
 
+    log::info!(
+        "Coverage crop: {}x{} → L={} T={} R={} B={} (threshold: {}/{} frames)",
+        orig_w, orig_h, left, top, orig_w - right, orig_h - bottom,
+        threshold, max_count,
+    );
+
+    // Stage 2: trim columns/rows with anomalous backgrounds.
+    // Compute the "interior" reference background from the central 50% of
+    // the coverage-cropped region, then scan from each edge inward.
+    let crop_w = right - left;
+    let crop_h = bottom - top;
+
+    if ch >= 3 && crop_w > 100 && crop_h > 100 {
+        let (trim_l, trim_r) = detect_banding_columns(
+            image, left, top, crop_w, crop_h, ch,
+        );
+        let (trim_t, trim_b) = detect_banding_rows(
+            image, left, top, crop_w, crop_h, ch,
+        );
+
+        if trim_l > 0 || trim_r > 0 || trim_t > 0 || trim_b > 0 {
+            log::info!(
+                "Banding trim: L+={} R+={} T+={} B+={}",
+                trim_l, trim_r, trim_t, trim_b,
+            );
+            left += trim_l;
+            right -= trim_r;
+            top += trim_t;
+            bottom -= trim_b;
+        }
+    }
+
     let new_w = right - left;
     let new_h = bottom - top;
 
     log::info!(
-        "Smart crop: {}x{} → {}x{} (threshold: {}/{} frames, L={} T={} R={} B={})",
+        "Final crop: {}x{} → {}x{}",
         orig_w, orig_h, new_w, new_h,
-        threshold, max_count,
-        left, top, orig_w - right, orig_h - bottom
     );
 
     let mut cropped = ImageData::new(new_w, new_h, ch);
@@ -498,6 +530,200 @@ fn smart_crop_by_coverage(
         }
     }
     cropped
+}
+
+/// Compute the sigma-clipped median of a slice of f32 values.
+fn sigma_clipped_median_vec(values: &mut Vec<f32>) -> f32 {
+    if values.is_empty() { return 0.0; }
+    for _ in 0..3 {
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let n = values.len();
+        if n < 10 { break; }
+        let median = values[n / 2];
+        let mut devs: Vec<f32> = values.iter().map(|&v| (v - median).abs()).collect();
+        devs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let sigma = 1.4826 * devs[n / 2];
+        let lo = median - 2.5 * sigma;
+        let hi = median + 2.5 * sigma;
+        values.retain(|&v| v >= lo && v <= hi);
+    }
+    if values.is_empty() { return 0.0; }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    values[values.len() / 2]
+}
+
+/// Compute the per-channel background median for a single column within the
+/// given crop region.
+fn column_background(
+    image: &ImageData, col: usize, y_start: usize, height: usize, ch: usize,
+) -> Vec<f32> {
+    (0..ch.min(3)).map(|c| {
+        let mut vals: Vec<f32> = (0..height)
+            .map(|dy| image.get(col, y_start + dy, c))
+            .filter(|v| v.abs() > 0.5)
+            .collect();
+        sigma_clipped_median_vec(&mut vals)
+    }).collect()
+}
+
+/// Compute the per-channel background median for a single row within the
+/// given crop region.
+fn row_background(
+    image: &ImageData, row: usize, x_start: usize, width: usize, ch: usize,
+) -> Vec<f32> {
+    (0..ch.min(3)).map(|c| {
+        let mut vals: Vec<f32> = (0..width)
+            .map(|dx| image.get(x_start + dx, row, c))
+            .filter(|v| v.abs() > 0.5)
+            .collect();
+        sigma_clipped_median_vec(&mut vals)
+    }).collect()
+}
+
+/// Scan columns from left and right edges inward, detecting where the
+/// per-channel background deviates from the interior. Returns (trim_left,
+/// trim_right) — the number of additional columns to remove from each side.
+fn detect_banding_columns(
+    image: &ImageData,
+    x0: usize, y0: usize, w: usize, h: usize, ch: usize,
+) -> (usize, usize) {
+    // Reference: median background of columns in the central 50%
+    let center_start = w / 4;
+    let center_end = w * 3 / 4;
+    let n_sample = 20.min(center_end - center_start);
+    let step = (center_end - center_start) / n_sample.max(1);
+
+    let mut ref_bg = vec![0.0f64; ch.min(3)];
+    let mut n_ref = 0u32;
+    for i in 0..n_sample {
+        let col = x0 + center_start + i * step;
+        let bg = column_background(image, col, y0, h, ch);
+        for (c, &v) in bg.iter().enumerate() {
+            ref_bg[c] += v as f64;
+        }
+        n_ref += 1;
+    }
+    if n_ref > 0 {
+        for v in &mut ref_bg { *v /= n_ref as f64; }
+    }
+
+    // Compute MAD of interior column backgrounds for the tolerance threshold
+    let mut col_diffs: Vec<f32> = Vec::new();
+    for i in 0..n_sample {
+        let col = x0 + center_start + i * step;
+        let bg = column_background(image, col, y0, h, ch);
+        let max_diff: f32 = bg.iter().enumerate()
+            .map(|(c, &v)| (v - ref_bg[c] as f32).abs())
+            .fold(0.0f32, f32::max);
+        col_diffs.push(max_diff);
+    }
+    col_diffs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let interior_mad = if col_diffs.is_empty() { 1.0 } else { col_diffs[col_diffs.len() / 2] };
+    let tolerance = (interior_mad * 5.0).max(0.5);
+
+    let max_trim = w / 4; // never trim more than 25% from each side
+
+    // Scan from left
+    let mut trim_left = 0;
+    for dx in 0..max_trim {
+        let bg = column_background(image, x0 + dx, y0, h, ch);
+        let max_diff: f32 = bg.iter().enumerate()
+            .map(|(c, &v)| (v - ref_bg[c] as f32).abs())
+            .fold(0.0f32, f32::max);
+        if max_diff > tolerance {
+            trim_left = dx + 1;
+        } else {
+            break;
+        }
+    }
+
+    // Scan from right
+    let mut trim_right = 0;
+    for dx in 0..max_trim {
+        let col = x0 + w - 1 - dx;
+        let bg = column_background(image, col, y0, h, ch);
+        let max_diff: f32 = bg.iter().enumerate()
+            .map(|(c, &v)| (v - ref_bg[c] as f32).abs())
+            .fold(0.0f32, f32::max);
+        if max_diff > tolerance {
+            trim_right = dx + 1;
+        } else {
+            break;
+        }
+    }
+
+    (trim_left, trim_right)
+}
+
+/// Scan rows from top and bottom edges inward, detecting where the
+/// per-channel background deviates from the interior. Returns (trim_top,
+/// trim_bottom).
+fn detect_banding_rows(
+    image: &ImageData,
+    x0: usize, y0: usize, w: usize, h: usize, ch: usize,
+) -> (usize, usize) {
+    let center_start = h / 4;
+    let center_end = h * 3 / 4;
+    let n_sample = 20.min(center_end - center_start);
+    let step = (center_end - center_start) / n_sample.max(1);
+
+    let mut ref_bg = vec![0.0f64; ch.min(3)];
+    let mut n_ref = 0u32;
+    for i in 0..n_sample {
+        let row = y0 + center_start + i * step;
+        let bg = row_background(image, row, x0, w, ch);
+        for (c, &v) in bg.iter().enumerate() {
+            ref_bg[c] += v as f64;
+        }
+        n_ref += 1;
+    }
+    if n_ref > 0 {
+        for v in &mut ref_bg { *v /= n_ref as f64; }
+    }
+
+    let mut row_diffs: Vec<f32> = Vec::new();
+    for i in 0..n_sample {
+        let row = y0 + center_start + i * step;
+        let bg = row_background(image, row, x0, w, ch);
+        let max_diff: f32 = bg.iter().enumerate()
+            .map(|(c, &v)| (v - ref_bg[c] as f32).abs())
+            .fold(0.0f32, f32::max);
+        row_diffs.push(max_diff);
+    }
+    row_diffs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let interior_mad = if row_diffs.is_empty() { 1.0 } else { row_diffs[row_diffs.len() / 2] };
+    let tolerance = (interior_mad * 5.0).max(0.5);
+
+    let max_trim = h / 4;
+
+    let mut trim_top = 0;
+    for dy in 0..max_trim {
+        let bg = row_background(image, y0 + dy, x0, w, ch);
+        let max_diff: f32 = bg.iter().enumerate()
+            .map(|(c, &v)| (v - ref_bg[c] as f32).abs())
+            .fold(0.0f32, f32::max);
+        if max_diff > tolerance {
+            trim_top = dy + 1;
+        } else {
+            break;
+        }
+    }
+
+    let mut trim_bottom = 0;
+    for dy in 0..max_trim {
+        let row = y0 + h - 1 - dy;
+        let bg = row_background(image, row, x0, w, ch);
+        let max_diff: f32 = bg.iter().enumerate()
+            .map(|(c, &v)| (v - ref_bg[c] as f32).abs())
+            .fold(0.0f32, f32::max);
+        if max_diff > tolerance {
+            trim_bottom = dy + 1;
+        } else {
+            break;
+        }
+    }
+
+    (trim_top, trim_bottom)
 }
 
 /// Neutralize background color using additive correction.
