@@ -4,6 +4,8 @@ A modern astrophotography image stacking tool built from scratch in Rust with an
 
 > *sidera* — Latin for "stars"
 
+![Sidera UI](images/sidera.png)
+
 ---
 
 ## Architecture
